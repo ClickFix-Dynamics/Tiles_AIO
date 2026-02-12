@@ -1,0 +1,23 @@
+# CFD (ClickFix Dynamics) - Tiles
+# Deploy using prebuilt images
+
+services:
+  frontend:
+    image: ${FRONTEND_IMAGE:-ghcr.io/cfd/tiles-frontend:latest}
+    ports:
+      - "8080:80"
+    environment:
+      - BACKEND_URL=http://backend:3001
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/cfd/tiles-backend:latest}
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DEMO_MODE=${DEMO_MODE:-false}
+    restart: unless-stopped

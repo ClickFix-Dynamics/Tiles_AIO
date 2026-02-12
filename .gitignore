@@ -1,0 +1,65 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build outputs
+dist/
+build/
+*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files (keep templates, ignore actual secrets)
+.env
+.env.local
+.env.*.local
+azure-credentials.json
+azure-credentials*.json
+credentials.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Testing
+coverage/
+
+# Azure Functions
+local.settings.json
+bin/
+obj/
+
+# Misc
+*.tgz
+.cache/
+.codex/
+
+# Tauri/Rust
+target/
+portal/src-tauri/target/
+Cargo.lock
+
+# VPN Certificates (SENSITIVE - never commit)
+*.pfx
+*.cer
+scripts/root-cert-data.txt
+scripts/vpn-client.zip
+scripts/ClickFixVPN*.pfx
+scripts/ClickFixVPN*.cer
+*.heaptimeline
+container/frontend/media/fleet.png
+/StKitts/_output
+/StKitts
+/StKitts
+/StKitts/_output
