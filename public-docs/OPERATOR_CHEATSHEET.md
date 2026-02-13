@@ -3,13 +3,13 @@
 ## New Subscription Install (ACA)
 
 ```powershell
-pwsh -File scripts\install-cfd.ps1 -InstallMethod local -DeployType aca -ProvisionAzurePrereqs -PublicAccess -ConfirmInstall
+pwsh -File scripts\install-cfd.ps1 -InstallMethod local -DeployType aca -ProvisionAzurePrereqs -PublicAccess -PromptGhcrCredentials -ConfirmInstall
 ```
 
 ## Local Docker Install
 
 ```powershell
-pwsh -File scripts\install-cfd.ps1 -InstallMethod local -DeployType docker -ConfirmInstall
+pwsh -File scripts\install-cfd.ps1 -InstallMethod local -DeployType docker -PromptGhcrCredentials -ConfirmInstall
 ```
 
 ## Update Production Channel

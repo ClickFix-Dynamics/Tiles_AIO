@@ -17,6 +17,8 @@ param(
     [string]$BackendAppName,
     [string]$FrontendImage = 'ghcr.io/cfd/tiles-frontend',
     [string]$BackendImage = 'ghcr.io/cfd/tiles-backend',
+    [string]$GhcrUsername = '',
+    [string]$GhcrPassword = '',
     [ValidateSet('latest','major','minor','version')]
     [string]$ReleaseTrack,
     [string]$TrackVersion,
@@ -142,6 +144,9 @@ if ($envMap.ContainsKey("FRONTEND_IMAGE") -and -not [string]::IsNullOrWhiteSpace
 if ($envMap.ContainsKey("BACKEND_IMAGE") -and -not [string]::IsNullOrWhiteSpace($envMap["BACKEND_IMAGE"])) {
     $BackendImage = Get-ImageBase $envMap["BACKEND_IMAGE"]
 }
+
+if (-not $GhcrUsername -and $envMap.ContainsKey("GHCR_USERNAME")) { $GhcrUsername = $envMap["GHCR_USERNAME"] }
+if (-not $GhcrPassword -and $envMap.ContainsKey("GHCR_PASSWORD")) { $GhcrPassword = $envMap["GHCR_PASSWORD"] }
 
 if (-not $InstallType) {
     $deployCompose = Join-Path $repoRoot "deploy\docker-compose.yml"
@@ -276,8 +281,31 @@ if ($InstallType -eq 'aca') {
     }
 
     $demoModeValue = if ($Channel -eq 'demo') { 'true' } else { 'false' }
-    az containerapp update --name $BackendAppName --resource-group $ResourceGroup --image $backendRef --set-env-vars DEMO_MODE=$demoModeValue | Out-Null
-    az containerapp update --name $FrontendAppName --resource-group $ResourceGroup --image $frontendRef | Out-Null
+
+    $backendArgs = @(
+        'containerapp', 'update',
+        '--name', $BackendAppName,
+        '--resource-group', $ResourceGroup,
+        '--image', $backendRef,
+        '--set-env-vars', "DEMO_MODE=$demoModeValue"
+    )
+    $frontendArgs = @(
+        'containerapp', 'update',
+        '--name', $FrontendAppName,
+        '--resource-group', $ResourceGroup,
+        '--image', $frontendRef
+    )
+
+    $hasGhcrCreds = -not [string]::IsNullOrWhiteSpace($GhcrUsername) -and -not [string]::IsNullOrWhiteSpace($GhcrPassword)
+    if ($hasGhcrCreds -and $backendRef -match '(?i)^ghcr\.io/') {
+        $backendArgs += @('--registry-server', 'ghcr.io', '--registry-username', $GhcrUsername, '--registry-password', $GhcrPassword)
+    }
+    if ($hasGhcrCreds -and $frontendRef -match '(?i)^ghcr\.io/') {
+        $frontendArgs += @('--registry-server', 'ghcr.io', '--registry-username', $GhcrUsername, '--registry-password', $GhcrPassword)
+    }
+
+    az @backendArgs | Out-Null
+    az @frontendArgs | Out-Null
 
     Write-Host "Azure Container Apps update complete." -ForegroundColor Green
     exit 0

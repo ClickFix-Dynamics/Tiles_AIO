@@ -11,7 +11,7 @@ This deployment path uses:
 From repo root:
 
 ```powershell
-pwsh -File scripts\install-cfd.ps1 -InstallMethod local -DeployType aca -ProvisionAzurePrereqs -PublicAccess -ConfirmInstall
+pwsh -File scripts\install-cfd.ps1 -InstallMethod local -DeployType aca -ProvisionAzurePrereqs -PublicAccess -PromptGhcrCredentials -ConfirmInstall
 ```
 
 ## Manual Two-Step Flow

@@ -46,6 +46,9 @@ param(
     [string]$StorageAccountName = "",
     [string]$FrontendImage = "",
     [string]$BackendImage = "",
+    [string]$GhcrUsername = "",
+    [string]$GhcrPassword = "",
+    [switch]$PromptGhcrCredentials,
     [switch]$DemoMode,
     [switch]$ConfirmInstall,
     [switch]$DryRun
@@ -106,6 +109,74 @@ function Set-OrAddEnvValue {
     }
 
     Set-Content -Path $Path -Value $lines -Encoding UTF8
+}
+
+function Convert-SecureStringToPlainText {
+    param([SecureString]$SecureValue)
+
+    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureValue)
+    try {
+        return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+    } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+    }
+}
+
+function Ensure-GhcrCredentials {
+    param(
+        [string]$EnvPath,
+        [string]$DeployType,
+        [switch]$Prompt
+    )
+
+    if ($DeployType -eq 'none') {
+        return
+    }
+
+    $envMap = Read-EnvFile -Path $EnvPath
+    $frontendImage = if ($envMap.ContainsKey("FRONTEND_IMAGE")) { $envMap["FRONTEND_IMAGE"] } else { "" }
+    $backendImage = if ($envMap.ContainsKey("BACKEND_IMAGE")) { $envMap["BACKEND_IMAGE"] } else { "" }
+    $usesGhcr = ($frontendImage -match '(?i)^ghcr\.io/') -or ($backendImage -match '(?i)^ghcr\.io/')
+    if (-not $usesGhcr) {
+        return
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($GhcrUsername)) {
+        Set-OrAddEnvValue -Path $EnvPath -Key "GHCR_USERNAME" -Value $GhcrUsername
+    }
+    if (-not [string]::IsNullOrWhiteSpace($GhcrPassword)) {
+        Set-OrAddEnvValue -Path $EnvPath -Key "GHCR_PASSWORD" -Value $GhcrPassword
+    }
+
+    $envMap = Read-EnvFile -Path $EnvPath
+    $existingUser = if ($envMap.ContainsKey("GHCR_USERNAME")) { $envMap["GHCR_USERNAME"] } else { "" }
+    $existingPassword = if ($envMap.ContainsKey("GHCR_PASSWORD")) { $envMap["GHCR_PASSWORD"] } else { "" }
+    if (-not [string]::IsNullOrWhiteSpace($existingUser) -and -not [string]::IsNullOrWhiteSpace($existingPassword)) {
+        return
+    }
+
+    if (-not $Prompt) {
+        Write-Host "GHCR credentials are not configured in deploy/.env." -ForegroundColor Yellow
+        Write-Host "If your images are private, re-run with -PromptGhcrCredentials (or pass -GhcrUsername/-GhcrPassword)." -ForegroundColor Yellow
+        return
+    }
+
+    Write-Action "Collecting GHCR credentials for private image pulls"
+    if ([string]::IsNullOrWhiteSpace($existingUser)) {
+        $enteredUser = Read-Host "Enter GHCR username (leave blank to skip)"
+        if (-not [string]::IsNullOrWhiteSpace($enteredUser)) {
+            Set-OrAddEnvValue -Path $EnvPath -Key "GHCR_USERNAME" -Value $enteredUser
+            $existingUser = $enteredUser
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($existingPassword) -and -not [string]::IsNullOrWhiteSpace($existingUser)) {
+        $enteredToken = Read-Host "Enter GHCR token (PAT with read:packages)" -AsSecureString
+        $tokenPlain = Convert-SecureStringToPlainText -SecureValue $enteredToken
+        if (-not [string]::IsNullOrWhiteSpace($tokenPlain)) {
+            Set-OrAddEnvValue -Path $EnvPath -Key "GHCR_PASSWORD" -Value $tokenPlain
+        }
+    }
 }
 
 function Ensure-GhcrLogin {
@@ -182,6 +253,9 @@ if ($DryRun) {
     Write-Action "[DryRun] Install method: $InstallMethod"
     Write-Action "[DryRun] Destination: $Destination"
     Write-Action "[DryRun] Deploy type: $DeployType"
+    if ($PromptGhcrCredentials) {
+        Write-Action "[DryRun] GHCR credential prompt requested."
+    }
     if ($DeployType -eq 'aca') {
         Write-Action "[DryRun] ACA resource group/location: $ResourceGroup / $Location"
         Write-Action "[DryRun] Provision prereqs: $($ProvisionAzurePrereqs.IsPresent)"
@@ -301,6 +375,8 @@ if ($DemoMode -or $Channel -eq 'demo') {
     Set-OrAddEnvValue -Path $envPath -Key "DEMO_MODE" -Value "true"
 }
 
+
+Ensure-GhcrCredentials -EnvPath $envPath -DeployType $DeployType -Prompt:$PromptGhcrCredentials
 if ($DeployType -eq 'none') {
     Write-Host "Install complete: $Destination" -ForegroundColor Green
     exit 0
@@ -376,6 +452,14 @@ if ($DeployType -eq 'aca') {
     if ($FrontendImage) { $deployArgs += @('-FrontendImage', $FrontendImage) }
     if ($BackendImage) { $deployArgs += @('-BackendImage', $BackendImage) }
     if ($DemoMode -or $Channel -eq 'demo') { $deployArgs += '-DemoMode' }
+
+    $envMap = Read-EnvFile -Path $envPath
+    if ($envMap.ContainsKey("GHCR_USERNAME") -and -not [string]::IsNullOrWhiteSpace($envMap["GHCR_USERNAME"])) {
+        $deployArgs += @('-GhcrUsername', $envMap["GHCR_USERNAME"])
+    }
+    if ($envMap.ContainsKey("GHCR_PASSWORD") -and -not [string]::IsNullOrWhiteSpace($envMap["GHCR_PASSWORD"])) {
+        $deployArgs += @('-GhcrPassword', $envMap["GHCR_PASSWORD"])
+    }
 
     Write-Action "Deploying to Azure Container Apps"
     pwsh @deployArgs
