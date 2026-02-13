@@ -3,7 +3,7 @@
 This repository contains deployment artifacts and automation scripts for Tiles.
 Source code is not included in this public bundle.
 
-## End-User Workflow (No T: Drive Required)
+## End-User Workflow
 
 1. Clone locally (any folder):
 
