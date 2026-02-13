@@ -59,4 +59,8 @@ scripts/ClickFixVPN*.pfx
 scripts/ClickFixVPN*.cer
 *.heaptimeline
 container/frontend/media/fleet.png
-
+/StKitts/_output
+/StKitts
+/StKitts
+/StKitts/_output
+/container

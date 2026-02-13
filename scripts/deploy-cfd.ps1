@@ -3,9 +3,46 @@
     Deploys CFD (Tiles) to Azure Container Apps using Bicep.
 
 .DESCRIPTION
-    Deploys prebuilt container images from deploy/azure/main.bicep. Values can be
-    provided via parameters or deploy/.env. Safe to re-run. Includes explicit
-    confirmation and DryRun mode.
+    Deploys prebuilt container images using deploy/azure/main.bicep when present.
+    Falls back to container/infrastructure/deploy-azure.ps1 if the public
+    deployment template is not available. Includes explicit confirmation and
+    dry-run support.
+
+.PARAMETER ResourceGroup
+    Azure resource group name.
+
+.PARAMETER Location
+    Azure region for deployment.
+
+.PARAMETER PublicAccess
+    If set, deploys with external ingress. Default is internal-only.
+
+.PARAMETER FrontendImage
+    Frontend image reference (default: ghcr.io/cfd/tiles-frontend:latest).
+
+.PARAMETER BackendImage
+    Backend image reference (default: ghcr.io/cfd/tiles-backend:latest).
+
+.PARAMETER EnvironmentName
+    Container Apps environment name.
+
+.PARAMETER FrontendAppName
+    Frontend Container App name.
+
+.PARAMETER BackendAppName
+    Backend Container App name.
+
+.PARAMETER ConfirmDeploy
+    Required to perform deployment actions.
+
+.PARAMETER DryRun
+    If set, prints planned actions without executing.
+
+.PARAMETER ReleaseTrack
+    Optional update track recorded for future updates (latest, major, minor, version).
+
+.PARAMETER TrackVersion
+    Version track value for major/minor/version updates.
 #>
 
 param(
@@ -14,19 +51,9 @@ param(
     [switch]$PublicAccess,
     [string]$FrontendImage = "ghcr.io/cfd/tiles-frontend:latest",
     [string]$BackendImage = "ghcr.io/cfd/tiles-backend:latest",
-    [switch]$DemoMode,
     [string]$EnvironmentName = "cfd-tiles-env",
     [string]$FrontendAppName = "cfd-tiles-frontend",
     [string]$BackendAppName = "cfd-tiles-backend",
-    [string]$AzureTenantId = "",
-    [string]$AzureClientId = "",
-    [string]$AzureClientSecret = "",
-    [string]$AzureStorageConnectionString = "",
-    [string]$AzureSubscriptionId = "",
-    [string]$AuthTenantId = "",
-    [string]$AuthAudience = "",
-    [string]$GhcrUsername = "",
-    [string]$GhcrPassword = "",
     [ValidateSet('latest','major','minor','version')]
     [string]$ReleaseTrack = 'latest',
     [string]$TrackVersion,
@@ -36,61 +63,19 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function Read-EnvFile {
-    param([string]$Path)
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$repoRoot = $repoRoot.Path
 
-    $result = @{}
-    if (-not (Test-Path $Path)) {
-        return $result
-    }
+$publicTemplate = Join-Path $repoRoot "deploy\azure\main.bicep"
+$legacyScript = Join-Path $repoRoot "container\infrastructure\deploy-azure.ps1"
 
-    foreach ($line in Get-Content -Path $Path) {
-        if ($line -match '^\s*#' -or $line -notmatch '=') { continue }
-        $parts = $line.Split('=', 2)
-        if ($parts.Count -eq 2) {
-            $key = $parts[0].Trim()
-            $value = $parts[1].Trim()
-            if ($key) { $result[$key] = $value }
-        }
-    }
-
-    return $result
-}
-
-function Resolve-Value {
-    param(
-        [string]$ParamValue,
-        [hashtable]$EnvMap,
-        [string]$EnvKey,
-        [string]$Default = ""
-    )
-
-    if (-not [string]::IsNullOrWhiteSpace($ParamValue)) {
-        return $ParamValue
-    }
-
-    if ($EnvMap.ContainsKey($EnvKey) -and -not [string]::IsNullOrWhiteSpace($EnvMap[$EnvKey])) {
-        return $EnvMap[$EnvKey]
-    }
-
-    return $Default
-}
-
-function Get-ImageBase {
-    param([string]$Image)
-
-    if ([string]::IsNullOrWhiteSpace($Image)) {
-        return $Image
-    }
-
-    $lastSlash = $Image.LastIndexOf('/')
-    $lastColon = $Image.LastIndexOf(':')
-    if ($lastColon -gt $lastSlash) {
-        return $Image.Substring(0, $lastColon)
-    }
-
-    return $Image
-}
+Write-Host "CFD Azure Deployment" -ForegroundColor Cyan
+Write-Host "Resource Group: $ResourceGroup" -ForegroundColor Gray
+Write-Host "Location: $Location" -ForegroundColor Gray
+Write-Host "Public Access: $PublicAccess" -ForegroundColor Gray
+Write-Host "Frontend Image: $FrontendImage" -ForegroundColor Gray
+Write-Host "Backend Image: $BackendImage" -ForegroundColor Gray
+Write-Host ""
 
 function Write-InstallState {
     param(
@@ -104,8 +89,7 @@ function Write-InstallState {
         [string]$FrontendImage,
         [string]$BackendImage,
         [string]$ReleaseTrack,
-        [string]$TrackVersion,
-        [bool]$DemoMode
+        [string]$TrackVersion
     )
 
     try {
@@ -127,7 +111,6 @@ function Write-InstallState {
             BackendImage = $BackendImage
             ReleaseTrack = $ReleaseTrack
             TrackVersion = $TrackVersion
-            DemoMode = $DemoMode
             UpdatedOn = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
         }
 
@@ -136,40 +119,6 @@ function Write-InstallState {
         Write-Host "Warning: Failed to write deploy/.install.json" -ForegroundColor Yellow
     }
 }
-
-$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$repoRoot = $repoRoot.Path
-
-$publicTemplate = Join-Path $repoRoot "deploy\azure\main.bicep"
-$legacyScript = Join-Path $repoRoot "container\infrastructure\deploy-azure.ps1"
-$envFile = Join-Path $repoRoot "deploy\.env"
-$envMap = Read-EnvFile -Path $envFile
-
-$FrontendImage = Resolve-Value -ParamValue $FrontendImage -EnvMap $envMap -EnvKey "FRONTEND_IMAGE" -Default "ghcr.io/cfd/tiles-frontend:latest"
-$BackendImage = Resolve-Value -ParamValue $BackendImage -EnvMap $envMap -EnvKey "BACKEND_IMAGE" -Default "ghcr.io/cfd/tiles-backend:latest"
-
-if (-not $DemoMode -and $envMap.ContainsKey("DEMO_MODE") -and $envMap["DEMO_MODE"].ToLowerInvariant() -eq "true") {
-    $DemoMode = $true
-}
-
-$AzureTenantId = Resolve-Value -ParamValue $AzureTenantId -EnvMap $envMap -EnvKey "AZURE_TENANT_ID"
-$AzureClientId = Resolve-Value -ParamValue $AzureClientId -EnvMap $envMap -EnvKey "AZURE_CLIENT_ID"
-$AzureClientSecret = Resolve-Value -ParamValue $AzureClientSecret -EnvMap $envMap -EnvKey "AZURE_CLIENT_SECRET"
-$AzureStorageConnectionString = Resolve-Value -ParamValue $AzureStorageConnectionString -EnvMap $envMap -EnvKey "AZURE_STORAGE_CONNECTION_STRING"
-$AzureSubscriptionId = Resolve-Value -ParamValue $AzureSubscriptionId -EnvMap $envMap -EnvKey "AZURE_SUBSCRIPTION_ID"
-$AuthTenantId = Resolve-Value -ParamValue $AuthTenantId -EnvMap $envMap -EnvKey "AUTH_TENANT_ID"
-$AuthAudience = Resolve-Value -ParamValue $AuthAudience -EnvMap $envMap -EnvKey "AUTH_AUDIENCE"
-$GhcrUsername = Resolve-Value -ParamValue $GhcrUsername -EnvMap $envMap -EnvKey "GHCR_USERNAME"
-$GhcrPassword = Resolve-Value -ParamValue $GhcrPassword -EnvMap $envMap -EnvKey "GHCR_PASSWORD"
-
-Write-Host "CFD Azure Deployment" -ForegroundColor Cyan
-Write-Host "Resource Group: $ResourceGroup" -ForegroundColor Gray
-Write-Host "Location: $Location" -ForegroundColor Gray
-Write-Host "Public Access: $($PublicAccess.IsPresent)" -ForegroundColor Gray
-Write-Host "Demo Mode: $($DemoMode.IsPresent)" -ForegroundColor Gray
-Write-Host "Frontend Image: $FrontendImage" -ForegroundColor Gray
-Write-Host "Backend Image: $BackendImage" -ForegroundColor Gray
-Write-Host ""
 
 if ($DryRun) {
     Write-Host "[DryRun] Would deploy using:" -ForegroundColor Yellow
@@ -191,68 +140,67 @@ if (-not $ConfirmDeploy) {
 }
 
 if (Test-Path $publicTemplate) {
-    if (-not $AzureTenantId) { $AzureTenantId = Read-Host "Enter Azure Tenant ID" }
-    if (-not $AzureClientId) { $AzureClientId = Read-Host "Enter Azure Client ID" }
-    if (-not $AzureClientSecret) {
-        $sec = Read-Host "Enter Azure Client Secret" -AsSecureString
-        $AzureClientSecret = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
-    }
-    if (-not $AzureStorageConnectionString) {
-        $AzureStorageConnectionString = Read-Host "Enter Azure Storage Connection String"
+    # Load env from deploy/.env if present (no secrets are printed)
+    $envFile = Join-Path $repoRoot "deploy\.env"
+    if (Test-Path $envFile) {
+        Get-Content $envFile | ForEach-Object {
+            if ($_ -match "^([^#=]+)=(.*)$") {
+                [Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim())
+            }
+        }
     }
 
-    if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
+    $azureTenantId = $env:AZURE_TENANT_ID
+    $azureClientId = $env:AZURE_CLIENT_ID
+    $azureClientSecret = $env:AZURE_CLIENT_SECRET
+    $azureStorageConnectionString = $env:AZURE_STORAGE_CONNECTION_STRING
+    $azureSubscriptionId = $env:AZURE_SUBSCRIPTION_ID
+    $authTenantId = $env:AUTH_TENANT_ID
+    $authAudience = $env:AUTH_AUDIENCE
+
+    if (-not $azureTenantId) { $azureTenantId = Read-Host "Enter Azure Tenant ID" }
+    if (-not $azureClientId) { $azureClientId = Read-Host "Enter Azure Client ID" }
+    if (-not $azureClientSecret) {
+        $sec = Read-Host "Enter Azure Client Secret" -AsSecureString
+        $azureClientSecret = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
+    }
+    if (-not $azureStorageConnectionString) {
+        $azureStorageConnectionString = Read-Host "Enter Azure Storage Connection String"
+    }
+
+    # Ensure Azure CLI is available and logged in
+    $azVersion = az version 2>&1 | ConvertFrom-Json
+    if (-not $azVersion) {
         Write-Host "ERROR: Azure CLI not found. Install from https://learn.microsoft.com/cli/azure/install-azure-cli" -ForegroundColor Red
         exit 1
     }
-
-    $accountRaw = az account show 2>$null
-    if (-not $accountRaw) {
+    $account = az account show 2>&1 | ConvertFrom-Json
+    if (-not $account) {
         az login | Out-Null
-        $accountRaw = az account show 2>$null
     }
 
-    if (-not $accountRaw) {
-        Write-Host "ERROR: Unable to resolve Azure account context." -ForegroundColor Red
-        exit 1
-    }
-
-    if ($AzureSubscriptionId) {
-        az account set --subscription $AzureSubscriptionId | Out-Null
-    }
-
-    $rgExists = az group exists --name $ResourceGroup
+    $rgExists = az group exists --name $ResourceGroup 2>&1
     if ($rgExists -eq "false") {
-        az group create --name $ResourceGroup --location $Location --only-show-errors | Out-Null
+        az group create --name $ResourceGroup --location $Location | Out-Null
     }
 
-    $deployArgs = @(
-        "deployment", "group", "create",
-        "--resource-group", $ResourceGroup,
-        "--template-file", $publicTemplate,
-        "--parameters", "location=$Location",
-        "--parameters", "environmentName=$EnvironmentName",
-        "--parameters", "frontendAppName=$FrontendAppName",
-        "--parameters", "backendAppName=$BackendAppName",
-        "--parameters", "publicAccess=$($PublicAccess.IsPresent.ToString().ToLowerInvariant())",
-        "--parameters", "demoMode=$($DemoMode.IsPresent.ToString().ToLowerInvariant())",
-        "--parameters", "frontendImage=$FrontendImage",
-        "--parameters", "backendImage=$BackendImage",
-        "--parameters", "azureTenantId=$AzureTenantId",
-        "--parameters", "azureClientId=$AzureClientId",
-        "--parameters", "azureClientSecret=$AzureClientSecret",
-        "--parameters", "azureStorageConnectionString=$AzureStorageConnectionString",
-        "--parameters", "azureSubscriptionId=$AzureSubscriptionId",
-        "--parameters", "authTenantId=$AuthTenantId",
-        "--parameters", "authAudience=$AuthAudience"
-    )
-
-    if (-not [string]::IsNullOrWhiteSpace($GhcrUsername) -and -not [string]::IsNullOrWhiteSpace($GhcrPassword)) {
-        $deployArgs += @("--parameters", "ghcrUsername=$GhcrUsername")
-        $deployArgs += @("--parameters", "ghcrPassword=$GhcrPassword")
-    }
-
-    az @deployArgs | Out-Null
+    az deployment group create `
+        --resource-group $ResourceGroup `
+        --template-file $publicTemplate `
+        --parameters location=$Location `
+        --parameters environmentName=$EnvironmentName `
+        --parameters frontendAppName=$FrontendAppName `
+        --parameters backendAppName=$BackendAppName `
+        --parameters publicAccess=$($PublicAccess.IsPresent) `
+        --parameters frontendImage=$FrontendImage `
+        --parameters backendImage=$BackendImage `
+        --parameters azureTenantId=$azureTenantId `
+        --parameters azureClientId=$azureClientId `
+        --parameters azureClientSecret=$azureClientSecret `
+        --parameters azureStorageConnectionString=$azureStorageConnectionString `
+        --parameters azureSubscriptionId=$azureSubscriptionId `
+        --parameters authTenantId=$authTenantId `
+        --parameters authAudience=$authAudience | Out-Null
 
     Write-InstallState `
         -RepoRoot $repoRoot `
@@ -262,16 +210,10 @@ if (Test-Path $publicTemplate) {
         -FrontendAppName $FrontendAppName `
         -BackendAppName $BackendAppName `
         -PublicAccess:$PublicAccess `
-        -FrontendImage (Get-ImageBase $FrontendImage) `
-        -BackendImage (Get-ImageBase $BackendImage) `
+        -FrontendImage $FrontendImage `
+        -BackendImage $BackendImage `
         -ReleaseTrack $ReleaseTrack `
-        -TrackVersion $TrackVersion `
-        -DemoMode:$DemoMode
-
-    $frontendFqdn = az containerapp show --name $FrontendAppName --resource-group $ResourceGroup --query "properties.configuration.ingress.fqdn" -o tsv 2>$null
-    if ($frontendFqdn) {
-        Write-Host "Frontend URL: https://$frontendFqdn" -ForegroundColor Green
-    }
+        -TrackVersion $TrackVersion
 
     Write-Host "Deployment completed." -ForegroundColor Green
     exit 0
@@ -296,9 +238,8 @@ if ($LASTEXITCODE -eq 0) {
         -FrontendAppName $FrontendAppName `
         -BackendAppName $BackendAppName `
         -PublicAccess:$PublicAccess `
-        -FrontendImage (Get-ImageBase $FrontendImage) `
-        -BackendImage (Get-ImageBase $BackendImage) `
+        -FrontendImage $FrontendImage `
+        -BackendImage $BackendImage `
         -ReleaseTrack $ReleaseTrack `
-        -TrackVersion $TrackVersion `
-        -DemoMode:$DemoMode
+        -TrackVersion $TrackVersion
 }

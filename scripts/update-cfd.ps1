@@ -1,10 +1,46 @@
 <#
 .SYNOPSIS
-    Updates an existing CFD (Tiles) deployment.
+    Updates an existing Tiles deployment to the latest channel images.
 
 .DESCRIPTION
-    Supports Docker Compose and Azure Container Apps deployments using explicit
-    confirmation and DryRun mode. Safe to re-run.
+    Supports Docker Compose and Azure Container Apps deployments. Uses the
+    channel's latest tags (latest or latest-rc). No secrets are printed.
+
+.PARAMETER Channel
+    Update channel: public (latest), test (latest-rc), or demo (latest-demo).
+
+.PARAMETER ReleaseTrack
+    Optional update track: latest, major, minor, or version.
+
+.PARAMETER TrackVersion
+    Version track value (e.g., 1 for major, 1.4 for minor, or 1.4.2 for exact).
+
+.PARAMETER UpdateFiles
+    If set, pulls latest files when the install is a git clone.
+
+.PARAMETER InstallType
+    Deployment type: docker or aca. If omitted, attempts to read deploy/.install.json.
+
+.PARAMETER ResourceGroup
+    Azure resource group (ACA only).
+
+.PARAMETER FrontendAppName
+    Frontend Container App name (ACA only).
+
+.PARAMETER BackendAppName
+    Backend Container App name (ACA only).
+
+.PARAMETER FrontendImage
+    Frontend image base (without tag).
+
+.PARAMETER BackendImage
+    Backend image base (without tag).
+
+.PARAMETER ConfirmUpdate
+    Required to perform update actions.
+
+.PARAMETER DryRun
+    If set, only prints planned actions without changes.
 #>
 
 param(
@@ -17,8 +53,6 @@ param(
     [string]$BackendAppName,
     [string]$FrontendImage = 'ghcr.io/cfd/tiles-frontend',
     [string]$BackendImage = 'ghcr.io/cfd/tiles-backend',
-    [string]$GhcrUsername = '',
-    [string]$GhcrPassword = '',
     [ValidateSet('latest','major','minor','version')]
     [string]$ReleaseTrack,
     [string]$TrackVersion,
@@ -34,119 +68,24 @@ function Write-Action {
     Write-Host $Message -ForegroundColor Cyan
 }
 
-function Read-EnvFile {
-    param([string]$Path)
-
-    $result = @{}
-    if (-not (Test-Path $Path)) {
-        return $result
-    }
-
-    foreach ($line in Get-Content -Path $Path) {
-        if ($line -match '^\s*#' -or $line -notmatch '=') { continue }
-        $parts = $line.Split('=', 2)
-        if ($parts.Count -eq 2) {
-            $key = $parts[0].Trim()
-            $value = $parts[1].Trim()
-            if ($key) { $result[$key] = $value }
-        }
-    }
-
-    return $result
-}
-
-function Set-OrAddEnvValue {
-    param(
-        [string]$Path,
-        [string]$Key,
-        [string]$Value
-    )
-
-    if (-not (Test-Path $Path)) {
-        Set-Content -Path $Path -Value "$Key=$Value" -Encoding UTF8
-        return
-    }
-
-    $lines = Get-Content -Path $Path
-    $updated = $false
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match "^\s*$([Regex]::Escape($Key))=") {
-            $lines[$i] = "$Key=$Value"
-            $updated = $true
-            break
-        }
-    }
-
-    if (-not $updated) {
-        $lines += "$Key=$Value"
-    }
-
-    Set-Content -Path $Path -Value $lines -Encoding UTF8
-}
-
-function Ensure-GhcrLogin {
-    param([hashtable]$EnvMap)
-
-    $ghcrUser = if ($EnvMap.ContainsKey("GHCR_USERNAME")) { $EnvMap["GHCR_USERNAME"] } else { "" }
-    $ghcrPassword = if ($EnvMap.ContainsKey("GHCR_PASSWORD")) { $EnvMap["GHCR_PASSWORD"] } else { "" }
-
-    if ([string]::IsNullOrWhiteSpace($ghcrUser) -or [string]::IsNullOrWhiteSpace($ghcrPassword)) {
-        return
-    }
-
-    Write-Action "Logging into ghcr.io using credentials from deploy/.env"
-    $ghcrPassword | docker login ghcr.io -u $ghcrUser --password-stdin | Out-Null
-}
-
-function Get-ImageBase {
-    param([string]$Image)
-
-    if ([string]::IsNullOrWhiteSpace($Image)) {
-        return $Image
-    }
-
-    $lastSlash = $Image.LastIndexOf('/')
-    $lastColon = $Image.LastIndexOf(':')
-    if ($lastColon -gt $lastSlash) {
-        return $Image.Substring(0, $lastColon)
-    }
-
-    return $Image
-}
-
 $repoRoot = (Get-Item -Path (Join-Path $PSScriptRoot "..") -ErrorAction Stop).FullName
 $statePath = Join-Path $repoRoot "deploy\.install.json"
-$envPath = Join-Path $repoRoot "deploy\.env"
-$releaseManifest = Join-Path $repoRoot "deploy\release-manifest.json"
 
-$state = $null
-if (Test-Path $statePath) {
+if (-not $InstallType -and (Test-Path $statePath)) {
     try {
         $state = Get-Content -Path $statePath -Raw | ConvertFrom-Json
+        if ($state.InstallType) { $InstallType = $state.InstallType }
+        if (-not $ResourceGroup -and $state.ResourceGroup) { $ResourceGroup = $state.ResourceGroup }
+        if (-not $FrontendAppName -and $state.FrontendAppName) { $FrontendAppName = $state.FrontendAppName }
+        if (-not $BackendAppName -and $state.BackendAppName) { $BackendAppName = $state.BackendAppName }
+        if ($state.FrontendImage) { $FrontendImage = $state.FrontendImage }
+        if ($state.BackendImage) { $BackendImage = $state.BackendImage }
+        if (-not $ReleaseTrack -and $state.ReleaseTrack) { $ReleaseTrack = $state.ReleaseTrack }
+        if (-not $TrackVersion -and $state.TrackVersion) { $TrackVersion = $state.TrackVersion }
     } catch {
         Write-Host "Warning: Failed to read deploy/.install.json. Proceeding with provided parameters." -ForegroundColor Yellow
     }
 }
-
-if (-not $InstallType -and $state -and $state.InstallType) { $InstallType = $state.InstallType }
-if (-not $ResourceGroup -and $state -and $state.ResourceGroup) { $ResourceGroup = $state.ResourceGroup }
-if (-not $FrontendAppName -and $state -and $state.FrontendAppName) { $FrontendAppName = $state.FrontendAppName }
-if (-not $BackendAppName -and $state -and $state.BackendAppName) { $BackendAppName = $state.BackendAppName }
-if (-not $ReleaseTrack -and $state -and $state.ReleaseTrack) { $ReleaseTrack = $state.ReleaseTrack }
-if (-not $TrackVersion -and $state -and $state.TrackVersion) { $TrackVersion = $state.TrackVersion }
-if ($state -and $state.FrontendImage) { $FrontendImage = Get-ImageBase $state.FrontendImage }
-if ($state -and $state.BackendImage) { $BackendImage = Get-ImageBase $state.BackendImage }
-
-$envMap = Read-EnvFile -Path $envPath
-if ($envMap.ContainsKey("FRONTEND_IMAGE") -and -not [string]::IsNullOrWhiteSpace($envMap["FRONTEND_IMAGE"])) {
-    $FrontendImage = Get-ImageBase $envMap["FRONTEND_IMAGE"]
-}
-if ($envMap.ContainsKey("BACKEND_IMAGE") -and -not [string]::IsNullOrWhiteSpace($envMap["BACKEND_IMAGE"])) {
-    $BackendImage = Get-ImageBase $envMap["BACKEND_IMAGE"]
-}
-
-if (-not $GhcrUsername -and $envMap.ContainsKey("GHCR_USERNAME")) { $GhcrUsername = $envMap["GHCR_USERNAME"] }
-if (-not $GhcrPassword -and $envMap.ContainsKey("GHCR_PASSWORD")) { $GhcrPassword = $envMap["GHCR_PASSWORD"] }
 
 if (-not $InstallType) {
     $deployCompose = Join-Path $repoRoot "deploy\docker-compose.yml"
@@ -160,11 +99,12 @@ if (-not $InstallType) {
     exit 1
 }
 
+$tag = if ($Channel -eq 'test') { 'latest-rc' } elseif ($Channel -eq 'demo') { 'latest-demo' } else { 'latest' }
+$releaseManifest = Join-Path $repoRoot "deploy\\release-manifest.json"
 if (-not $ReleaseTrack -or $ReleaseTrack.Trim().Length -eq 0) {
     $ReleaseTrack = 'latest'
 }
 
-$tag = if ($Channel -eq 'test') { 'latest-rc' } elseif ($Channel -eq 'demo') { 'latest-demo' } else { 'latest' }
 if ($ReleaseTrack -ne 'latest') {
     if (-not $TrackVersion -and (Test-Path $releaseManifest)) {
         try {
@@ -189,8 +129,8 @@ if ($ReleaseTrack -ne 'latest') {
     $tag = $TrackVersion
 }
 
-$frontendRef = "$FrontendImage`:$tag"
-$backendRef = "$BackendImage`:$tag"
+$frontendRef = "${FrontendImage}:$tag"
+$backendRef = "${BackendImage}:$tag"
 
 Write-Host "CFD Update" -ForegroundColor Cyan
 Write-Host "Channel: $Channel" -ForegroundColor Gray
@@ -198,7 +138,7 @@ Write-Host "Install Type: $InstallType" -ForegroundColor Gray
 Write-Host "Frontend Image: $frontendRef" -ForegroundColor Gray
 Write-Host "Backend Image: $backendRef" -ForegroundColor Gray
 Write-Host "Release Track: $ReleaseTrack" -ForegroundColor Gray
-Write-Host ""
+Write-Host "";
 
 if ($DryRun) {
     Write-Action "[DryRun] Would update deployment."
@@ -217,7 +157,7 @@ if ($UpdateFiles) {
         if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
             Write-Host "Warning: git not found; skipping file updates." -ForegroundColor Yellow
         } else {
-            Write-Action "Updating files via git pull"
+            Write-Host "Updating files via git pull..." -ForegroundColor Cyan
             git -C $repoRoot pull
         }
     } else {
@@ -237,26 +177,16 @@ if ($InstallType -eq 'docker') {
         exit 1
     }
 
-    $envTemplate = Join-Path $deployDir ".env.example"
-    if (-not (Test-Path $envPath) -and (Test-Path $envTemplate)) {
-        Copy-Item -Path $envTemplate -Destination $envPath -Force
-    }
-
-    Set-OrAddEnvValue -Path $envPath -Key "FRONTEND_IMAGE" -Value $frontendRef
-    Set-OrAddEnvValue -Path $envPath -Key "BACKEND_IMAGE" -Value $backendRef
+    $env:FRONTEND_IMAGE = $frontendRef
+    $env:BACKEND_IMAGE = $backendRef
     if ($Channel -eq 'demo') {
-        Set-OrAddEnvValue -Path $envPath -Key "DEMO_MODE" -Value "true"
-    } else {
-        Set-OrAddEnvValue -Path $envPath -Key "DEMO_MODE" -Value "false"
+        $env:DEMO_MODE = 'true'
     }
 
-    $envMap = Read-EnvFile -Path $envPath
-
-    Push-Location $repoRoot
+    Push-Location $deployDir
     try {
-        Ensure-GhcrLogin -EnvMap $envMap
-        docker compose -f deploy\docker-compose.yml --env-file deploy\.env pull | Out-Null
-        docker compose -f deploy\docker-compose.yml --env-file deploy\.env up -d | Out-Null
+        docker compose pull | Out-Null
+        docker compose up -d | Out-Null
     } finally {
         Pop-Location
     }
@@ -281,31 +211,8 @@ if ($InstallType -eq 'aca') {
     }
 
     $demoModeValue = if ($Channel -eq 'demo') { 'true' } else { 'false' }
-
-    $backendArgs = @(
-        'containerapp', 'update',
-        '--name', $BackendAppName,
-        '--resource-group', $ResourceGroup,
-        '--image', $backendRef,
-        '--set-env-vars', "DEMO_MODE=$demoModeValue"
-    )
-    $frontendArgs = @(
-        'containerapp', 'update',
-        '--name', $FrontendAppName,
-        '--resource-group', $ResourceGroup,
-        '--image', $frontendRef
-    )
-
-    $hasGhcrCreds = -not [string]::IsNullOrWhiteSpace($GhcrUsername) -and -not [string]::IsNullOrWhiteSpace($GhcrPassword)
-    if ($hasGhcrCreds -and $backendRef -match '(?i)^ghcr\.io/') {
-        $backendArgs += @('--registry-server', 'ghcr.io', '--registry-username', $GhcrUsername, '--registry-password', $GhcrPassword)
-    }
-    if ($hasGhcrCreds -and $frontendRef -match '(?i)^ghcr\.io/') {
-        $frontendArgs += @('--registry-server', 'ghcr.io', '--registry-username', $GhcrUsername, '--registry-password', $GhcrPassword)
-    }
-
-    az @backendArgs | Out-Null
-    az @frontendArgs | Out-Null
+    az containerapp update --name $BackendAppName --resource-group $ResourceGroup --image $backendRef --set-env-vars DEMO_MODE=$demoModeValue | Out-Null
+    az containerapp update --name $FrontendAppName --resource-group $ResourceGroup --image $frontendRef | Out-Null
 
     Write-Host "Azure Container Apps update complete." -ForegroundColor Green
     exit 0

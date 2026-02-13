@@ -1,62 +1,59 @@
-# Azure Container Apps Deployment
+# Azure Container Apps Deployment (Bicep + PowerShell)
 
-This deployment path uses:
-- `deploy/azure/main.bicep`
-- `scripts/setup-cfd-prereqs.ps1`
-- `scripts/deploy-cfd.ps1`
-- `scripts/install-cfd.ps1`
+This path deploys CFD to Azure Container Apps using Bicep and a PowerShell deployment script with **prebuilt images**.
 
-## Recommended One-Command Flow
+Default images:
+- `ghcr.io/cfd/tiles-frontend:latest`
+- `ghcr.io/cfd/tiles-backend:latest`
 
-From repo root:
+## Prerequisites
 
-```powershell
-pwsh -File scripts\install-cfd.ps1 -InstallMethod local -DeployType aca -ProvisionAzurePrereqs -PublicAccess -PromptGhcrCredentials -ConfirmInstall
-```
+- Azure CLI (`az`)
+- PowerShell 7 (`pwsh`)
+- Permissions to create resources in the target subscription
 
-## Manual Two-Step Flow
+## Quick Deploy
 
-1. Bootstrap Azure prerequisites and write `deploy/.env`:
+1. Open a PowerShell 7 terminal and move to the repo root:
 
 ```powershell
-pwsh -File scripts\setup-cfd-prereqs.ps1 -ResourceGroup cfd-rg -Location eastus2 -ConfirmSetup
+cd T:\CFD\CFD
 ```
 
-2. Deploy Container Apps:
+2. Run the deployment script:
 
 ```powershell
-pwsh -File scripts\deploy-cfd.ps1 -ResourceGroup cfd-rg -Location eastus2 -PublicAccess -ConfirmDeploy
+pwsh -File scripts\deploy-cfd.ps1 -ResourceGroup "cfd-rg" -Location "eastus2" -ConfirmDeploy
 ```
 
-## Dry-Run
+3. Optional flags:
 
-Preview setup:
-
-```powershell
-pwsh -File scripts\setup-cfd-prereqs.ps1 -ResourceGroup cfd-rg -Location eastus2 -DryRun
-```
-
-Preview deployment:
-
-```powershell
-pwsh -File scripts\deploy-cfd.ps1 -ResourceGroup cfd-rg -Location eastus2 -DryRun
-```
-
-## Optional Parameters
-
+- `-PublicAccess` to expose the frontend publicly (default is internal-only).
 - `-FrontendImage` and `-BackendImage` to override image tags.
-- `-DemoMode` for demo data mode.
-- `-GhcrUsername` and `-GhcrPassword` when images are private.
+- `-DryRun` to preview actions without making changes.
 
-## Post-Deploy
+## Configuration
 
-Get the frontend URL:
+The script reads values from `deploy/.env` if present, or prompts for them. Use `deploy/.env.example` as the template and see `public-docs/CONFIGURATION.md` for required values.
+
+## Updates
+
+After the initial deployment, update to the latest production images:
 
 ```powershell
-az containerapp show --name cfd-tiles-frontend --resource-group cfd-rg --query properties.configuration.ingress.fqdn -o tsv
+pwsh -File scripts\update-cfd.ps1 -Channel public -ConfirmUpdate
 ```
 
-Open:
-- `https://<frontend-fqdn>`
+For pre-release validation, use:
 
-Tiles, Crunch mode, and 3D Asset mode are provided by the deployed app images.
+```powershell
+pwsh -File scripts\update-cfd.ps1 -Channel test -ConfirmUpdate
+```
+
+The deployment script writes `deploy/.install.json` so updates can re-use app names and resource group.
+
+## Notes
+
+- The Bicep template lives at `deploy/azure/main.bicep`.
+- Images are pulled from a registry (default: `ghcr.io/cfd/tiles-*`).
+- For a private deployment, keep the default internal ingress and access via VPN/Bastion.

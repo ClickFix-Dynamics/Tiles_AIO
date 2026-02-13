@@ -1,23 +1,40 @@
-# Public Documentation Index
+# CFD (ClickFix Dynamics) — Tiles
 
-Use this documentation set for deploying and operating the Tiles public package.
+This public repository contains **deployment artifacts only** for the Tiles product. Source code and internal design details are not included.
 
-## Recommended Reading Order
+The helpdesk module is in active development and will ship as part of Tiles.
 
-1. `INSTALL.md` - end-to-end install and deploy flow.
-2. `CONFIGURATION.md` - environment variables and image settings.
-3. `DEPLOY_AZURE.md` - ACA deployment details and troubleshooting.
-4. `DEPLOY_DOCKER.md` - Docker Compose deployment details.
-5. `OPERATOR_CHEATSHEET.md` - quick commands for operations and updates.
+## Quick Start
 
-## Deployment Scope
+- Simple install (short guide): `public-docs/INSTALL_SIMPLE.md`.
+- Operator cheat sheet: `public-docs/OPERATOR_CHEATSHEET.md`.
+- Local or evaluation: see `public-docs/DEPLOY_DOCKER.md`.
+- Azure Container Apps (Bicep + PowerShell): see `public-docs/DEPLOY_AZURE.md`.
 
-This repository ships deployment assets only:
-- `deploy/docker-compose.yml`
-- `deploy/azure/main.bicep`
-- `scripts/install-cfd.ps1`
-- `scripts/setup-cfd-prereqs.ps1`
-- `scripts/deploy-cfd.ps1`
-- `scripts/update-cfd.ps1`
+## Updates
 
-Tiles, Crunch mode, and 3D Asset mode are available in the deployed application images.
+- Production updates: `pwsh -File scripts\update-cfd.ps1 -Channel public -ConfirmUpdate`
+- Pre-release updates: `pwsh -File scripts\update-cfd.ps1 -Channel test -ConfirmUpdate`
+- Major/minor track updates: `pwsh -File scripts\update-cfd.ps1 -Channel public -ReleaseTrack minor -TrackVersion 1.4 -ConfirmUpdate`
+
+## Repo Map
+
+- `deploy/` - deployment assets (Docker Compose + Bicep).
+- `public-docs/` - public-facing documentation.
+- `scripts/` - deployment utilities.
+
+## Security and Configuration
+
+- Secrets are never committed; configure via environment variables or managed services.
+- See `public-docs/CONFIGURATION.md` and `public-docs/SECURITY.md` for setup and reporting guidance.
+
+## Release and Legal
+
+- v1.0.0 public dev log: `public-docs/DEVLOG_v1.0.0.md`
+- Terms of Service: `public-docs/TERMS_OF_SERVICE.md`
+- Privacy Policy: `public-docs/PRIVACY_POLICY.md`
+- License: `LICENSE`
+
+## Architecture Overview
+
+See `public-docs/ARCHITECTURE.md` for a high-level view of runtime components and integrations.

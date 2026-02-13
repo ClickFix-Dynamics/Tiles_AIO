@@ -1,34 +1,59 @@
 # Docker Compose Deployment
 
-Use this mode for local evaluation.
+This path is best for local evaluation and developer environments using prebuilt images.
 
 ## Prerequisites
 
 - Docker Desktop
 - PowerShell 7 (`pwsh`)
 
-## Deploy
+## Steps
 
-From repo root:
+1. Open a PowerShell 7 terminal and move to the repo root:
 
 ```powershell
-pwsh -File scripts\install-cfd.ps1 -InstallMethod local -DeployType docker -PromptGhcrCredentials -ConfirmInstall
+cd T:\CFD\CFD
 ```
 
-This command ensures `deploy/.env` exists and starts containers.
+2. Create your local environment file from the template:
 
-## Access
+```powershell
+copy deploy\.env.example deploy\.env
+notepad deploy\.env
+```
+
+3. Build and start the containers:
+
+```powershell
+docker compose -f deploy\docker-compose.yml --env-file deploy\.env up -d
+```
+
+4. Open the app:
 
 - Frontend: `http://localhost:8080`
 
-## Stop
+5. Stop the containers when done:
 
 ```powershell
-docker compose -f deploy\docker-compose.yml --env-file deploy\.env down
+docker compose down
+```
+
+## Updates
+
+Pull the latest production images and restart:
+
+```powershell
+pwsh -File scripts\update-cfd.ps1 -Channel public -ConfirmUpdate
+```
+
+For pre-release validation, use:
+
+```powershell
+pwsh -File scripts\update-cfd.ps1 -Channel test -ConfirmUpdate
 ```
 
 ## Notes
 
-- If registry images are private, provide `GHCR_USERNAME` and `GHCR_PASSWORD` during install or in `deploy/.env`.
-- Image refs are controlled by `FRONTEND_IMAGE` and `BACKEND_IMAGE` in `deploy/.env`.
-- Tiles, Crunch mode, and 3D Asset mode are available through the deployed app images.
+- `deploy/docker-compose.yml` defines the frontend and backend services.
+- `deploy/.env` contains secrets and must never be committed to source control.
+- See `public-docs/CONFIGURATION.md` for required environment variables.
